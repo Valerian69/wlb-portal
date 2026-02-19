@@ -1,0 +1,11 @@
+{
+  "name": "Whistleblower Portal",
+  "short_name": "WLB Portal",
+  "description": "Safe, anonymous reporting for workplace concerns",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "orientation": "portrait-primary",
+  "icons": []
+}

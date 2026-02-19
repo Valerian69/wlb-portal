@@ -1,0 +1,451 @@
+// Whistleblower Portal - Prisma Schema
+// Implements: RBAC, Message Broker, Encryption support, EXIF scrubbing audit
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER ACCESS MANAGEMENT
+// ============================================
+
+enum UserRole {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  EXTERNAL_ADMIN
+  INTERNAL_ADMIN
+  REPORTER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String    // Bcrypt hashed password
+  name            String
+  role            UserRole  @default(INTERNAL_ADMIN)
+  status          UserStatus @default(ACTIVE)
+  
+  // Company association (null for SUPER_ADMIN and EXTERNAL_ADMIN)
+  clientId        String?
+  client          Client?   @relation(fields: [clientId], references: [id])
+  
+  // Authentication tokens
+  refreshToken    String?
+  tokenExpiry     DateTime?
+  
+  // Audit fields
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  reports         Report[]              @relation("InternalAdminReports")
+  staffActivity   StaffActivityLog[]
+  sessions        UserSession[]
+  
+  // Indexes for performance
+  @@index([email])
+  @@index([clientId, role])
+  @@index([status])
+}
+
+model UserSession {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique // JWT token hash
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ============================================
+// CLIENT / ORGANIZATION MANAGEMENT
+// ============================================
+
+model Client {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  primaryColor  String   @default("#3b82f6")
+  logoUrl       String?
+  isActive      Boolean  @default(true)
+  
+  // Encryption keys (AES-256 encrypted at rest)
+  encryptionKey String   // Unique encryption key for this client's data
+  encryptionIv  String   // Initialization vector
+  
+  // Audit fields
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  users         User[]
+  reports       Report[]
+  chatRooms     ChatRoom[]
+  staffActivity StaffActivityLog[]
+  
+  // Indexes
+  @@index([slug])
+  @@index([isActive])
+}
+
+// ============================================
+// REPORT MANAGEMENT
+// ============================================
+
+enum ReportStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  VALIDATED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ReportType {
+  HARASSMENT
+  DISCRIMINATION
+  SAFETY
+  ETHICS
+  FRAUD
+  OTHER
+}
+
+model Report {
+  id                String      @id @default(cuid())
+  ticketId          String      @unique // Public facing ticket ID (e.g., WLB-2024-001)
+  
+  // Authentication for anonymous reporters
+  pinHash           String      // Bcrypt hashed PIN (6 digits)
+  pinAttempts       Int         @default(0)
+  pinLockedUntil    DateTime?
+  
+  // Report content (AES-256 encrypted)
+  encryptedContent  String      // Encrypted JSON containing title, description, etc.
+  encryptionKey     String      // AES-256 key for content decryption
+  encryptionIv      String      // IV for content decryption
+  
+  // Report metadata
+  type              ReportType  @default(OTHER)
+  status            ReportStatus @default(SUBMITTED)
+  
+  // Severity flags
+  involvesPhysicalHarm    Boolean @default(false)
+  involvesLegalViolation  Boolean @default(false)
+  
+  // Location and date (encrypted)
+  encryptedLocation       String?
+  encryptedDateOfIncident String?
+  
+  // Associations
+  clientId        String
+  client          Client      @relation(fields: [clientId], references: [id])
+  
+  // Internal admin assigned (nullable - not all reports need internal team)
+  internalAdminId String?
+  internalAdmin   User?       @relation("InternalAdminReports", fields: [internalAdminId], references: [id])
+  
+  // Chat rooms (strictly isolated)
+  reporterChatRoomId    String? @unique // Room A: Reporter <-> External Admin
+  internalChatRoomId    String? @unique // Room B: External Admin <-> Internal Admin
+  
+  // Audit fields
+  submittedAt     DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  
+  // Relations
+  messages        Message[]
+  attachments     Attachment[]
+  statusHistory   ReportStatusHistory[]
+  
+  // Indexes
+  @@index([ticketId])
+  @@index([clientId, status])
+  @@index([status])
+  @@index([submittedAt])
+}
+
+model ReportStatusHistory {
+  id        String        @id @default(cuid())
+  reportId  String
+  report    Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  fromStatus ReportStatus?
+  toStatus   ReportStatus
+  changedBy  String?      // User ID who changed status (null for system)
+  reason     String?
+  createdAt  DateTime     @default(now())
+  
+  @@index([reportId])
+  @@index([createdAt])
+}
+
+// ============================================
+// MESSAGE BROKER - ISOLATED CHAT ROOMS
+// ============================================
+
+enum ChatRoomType {
+  REPORTER_EXTERNAL    // Room A: Reporter <-> External Admin
+  EXTERNAL_INTERNAL    // Room B: External Admin <-> Internal Admin
+}
+
+enum ChatRoomStatus {
+  ACTIVE
+  ARCHIVED
+  LOCKED
+}
+
+model ChatRoom {
+  id          String        @id @default(cuid())
+  type        ChatRoomType
+  status      ChatRoomStatus @default(ACTIVE)
+  
+  // Encryption (each room has unique encryption)
+  encryptionKey String      // AES-256 key for this room
+  encryptionIv  String      // IV for this room
+  
+  // Associations
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id])
+  reportId      String?     @unique
+  
+  // Room type specific - which side of the bridge
+  isReporterRoom Boolean   @default(false) // true for REPORTER_EXTERNAL rooms
+  isInternalRoom Boolean   @default(false) // true for EXTERNAL_INTERNAL rooms
+  
+  // Audit fields
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  // Relations
+  messages    Message[]
+  
+  // Indexes
+  @@index([reportId])
+  @@index([clientId, type])
+  @@index([status])
+}
+
+enum MessageSenderType {
+  REPORTER
+  EXTERNAL_ADMIN
+  INTERNAL_ADMIN
+  SYSTEM
+}
+
+model Message {
+  id          String            @id @default(cuid())
+  roomId      String
+  room        ChatRoom          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  reportId    String
+  report      Report            @relation(fields: [reportId], references: [id])
+  
+  // Content (AES-256 encrypted per message)
+  encryptedContent String       // Encrypted message text
+  encryptionIv     String       // IV for this message
+  
+  // Sender info
+  senderType    MessageSenderType
+  senderId      String?         // null for SYSTEM messages
+  isInternal    Boolean         @default(false) // Internal admin notes
+  
+  // Delivery status
+  isDelivered   Boolean         @default(false)
+  isRead        Boolean         @default(false)
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  
+  // Audit fields
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  
+  // Indexes
+  @@index([roomId, createdAt])
+  @@index([reportId])
+  @@index([senderType])
+}
+
+// ============================================
+// FILE UPLOADS & EXIF SCRUBBING
+// ============================================
+
+enum AttachmentType {
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  OTHER
+}
+
+enum AttachmentStatus {
+  PENDING_SCAN
+  CLEAN
+  QUARANTINED
+  DELETED
+}
+
+model Attachment {
+  id              String           @id @default(cuid())
+  reportId        String
+  report          Report           @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  
+  // File info
+  originalName    String
+  storedName      String           // Sanitized filename
+  mimeType        String
+  fileSize        Int              // bytes
+  type            AttachmentType
+  
+  // Storage (encrypted at rest)
+  storagePath     String           // S3 or local path
+  encryptionKey   String           // Unique key for this file
+  encryptionIv    String
+  encryptedContent String          // Encrypted file content (for small files)
+
+  // EXIF scrubbing audit
+  exifScrubbed    Boolean          @default(false)
+  exifScrubbedAt  DateTime?
+  originalExif    String?          // Encrypted backup of original EXIF (for investigations)
+  scrubbedBy      String?          // User ID who performed scrubbing
+  
+  // Security scan
+  status          AttachmentStatus @default(PENDING_SCAN)
+  scanResult      String?
+  scannedAt       DateTime?
+  
+  // Audit fields
+  uploadedAt      DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  // Indexes
+  @@index([reportId])
+  @@index([status])
+}
+
+// ============================================
+// AUDIT & ACTIVITY LOGGING
+// ============================================
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE_REPORT
+  VIEW_REPORT
+  UPDATE_REPORT
+  DELETE_REPORT
+  SEND_MESSAGE
+  VIEW_MESSAGE
+  UPLOAD_ATTACHMENT
+  DOWNLOAD_ATTACHMENT
+  SCRUB_EXIF
+  CHANGE_STATUS
+  CREATE_USER
+  UPDATE_USER
+  DELETE_USER
+  CREATE_CLIENT
+  UPDATE_CLIENT
+  DEACTIVATE_CLIENT
+  DELETE_CLIENT
+  ACCESS_DENIED
+  PIN_ATTEMPT
+  PIN_LOCKED
+}
+
+enum AuditStatus {
+  SUCCESS
+  FAILURE
+  WARNING
+}
+
+model AuditLog {
+  id          String        @id @default(cuid())
+  action      AuditAction
+  status      AuditStatus
+
+  // Actor
+  userId      String?
+  userEmail   String?       // Denormalized for audit integrity
+
+  // Target
+  targetType  String?       // e.g., "Report", "User", "Client"
+  targetId    String?
+
+  // Context
+  clientId    String?
+  ipAddress   String?
+  userAgent   String?
+
+  // Details
+  metadata    Json?         // Additional context
+  errorMessage String?
+
+  createdAt   DateTime      @default(now())
+
+  // Indexes for audit queries
+  @@index([userId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+  @@index([clientId, createdAt])
+  @@index([createdAt])
+}
+
+model StaffActivityLog {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId    String?
+  client      Client?   @relation(fields: [clientId], references: [id])
+  
+  activity    String
+  metadata    Json?
+  ipAddress   String?
+  
+  createdAt   DateTime  @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([clientId, createdAt])
+}
+
+// ============================================
+// API RATE LIMITING & SECURITY
+// ============================================
+
+model RateLimit {
+  id        String   @id @default(cuid())
+  identifier String  @unique // IP address or user ID
+  endpoint   String
+  count     Int      @default(1)
+  resetAt   DateTime
+  
+  @@index([identifier, endpoint])
+  @@index([resetAt])
+}
+
+model PinAttempt {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ipAddress String?
+  success   Boolean
+  createdAt DateTime @default(now())
+  
+  @@index([ticketId, createdAt])
+  @@index([createdAt])
+}

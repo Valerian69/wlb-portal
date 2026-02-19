@@ -1,0 +1,85 @@
+{
+  "name": "wlb-portal",
+  "version": "1.0.0",
+  "description": "Whistleblower Portal - TestSprite Configuration",
+  "testsprite": {
+    "enabled": true,
+    "projectType": "nextjs",
+    "framework": {
+      "name": "next",
+      "version": "16.x"
+    },
+    "testing": {
+      "unit": {
+        "enabled": true,
+        "framework": "jest",
+        "config": "jest.config.js",
+        "testMatch": [
+          "**/__tests__/**/*.test.ts?(x)",
+          "**/*.test.ts?(x)"
+        ]
+      },
+      "component": {
+        "enabled": true,
+        "framework": "react-testing-library"
+      },
+      "e2e": {
+        "enabled": false,
+        "framework": "playwright"
+      },
+      "visual": {
+        "enabled": false,
+        "tool": "testsprite-visual"
+      }
+    },
+    "coverage": {
+      "enabled": true,
+      "threshold": {
+        "lines": 50,
+        "branches": 50,
+        "functions": 50,
+        "statements": 50
+      },
+      "reporters": ["text", "lcov", "html"]
+    },
+    "reporting": {
+      "outputDir": "./test-results",
+      "formats": ["json", "html"],
+      "junit": true
+    },
+    "ci": {
+      "enabled": true,
+      "providers": ["github-actions", "gitlab-ci", "jenkins"]
+    },
+    "paths": {
+      "src": "./src",
+      "tests": "./src/__tests__",
+      "components": "./src/components",
+      "pages": "./src/app",
+      "api": "./src/app/api"
+    },
+    "features": {
+      "rbac": {
+        "enabled": true,
+        "roles": ["super_admin", "company_admin", "external_admin", "internal_admin", "reporter"]
+      },
+      "api": {
+        "enabled": true,
+        "endpoints": [
+          "/api/auth/admin",
+          "/api/auth/reporter",
+          "/api/reports",
+          "/api/messages",
+          "/api/users",
+          "/api/clients",
+          "/api/upload"
+        ]
+      },
+      "database": {
+        "enabled": true,
+        "orm": "prisma",
+        "provider": "postgresql"
+      }
+    }
+  }
+}
