@@ -9,24 +9,28 @@ import { Badge } from '@/components/ui/badge';
 import { mockCompanies, mockStaffUsers } from '@/lib/mock-data';
 
 export default function SuperAdminDashboardPage() {
-  const { user, isSuperAdmin, logout } = useAuth();
+  const { user, isSuperAdmin, isLoading, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isSuperAdmin) {
-      router.push('/admin/login');
+    if (!isLoading && !isSuperAdmin) {
+      router.push('/admin/login?redirect=/admin/super');
     }
-  }, [isSuperAdmin, router]);
+  }, [isSuperAdmin, isLoading, router]);
 
-  if (!isSuperAdmin) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-500">Redirecting...</p>
+          <p className="text-gray-500">Loading...</p>
         </div>
       </div>
     );
+  }
+
+  if (!isSuperAdmin) {
+    return null;
   }
 
   const totalCompanies = mockCompanies.length;

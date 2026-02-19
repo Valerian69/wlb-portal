@@ -45,6 +45,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Check authentication on mount and when pathname changes
   useEffect(() => {
     const checkAuth = async () => {
+      // Only run on client side
+      if (typeof window === 'undefined') return;
+      
       const storedUser = getStoredUser();
       const token = getAccessToken();
 
