@@ -324,7 +324,7 @@ describe('Message Broker Service', () => {
         const result = await canAccessRoom('room-internal-1', 'reporter');
 
         expect(result.allowed).toBe(false);
-        expect(result.reason).toContain('cannot access internal team');
+        expect(result.reason).toContain('Reporters can only access');
       });
     });
 

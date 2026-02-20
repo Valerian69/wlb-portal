@@ -296,8 +296,7 @@ describe('API Client - Reports', () => {
         body: JSON.stringify(mockReportData),
       });
 
-      expect(result.data).toBeDefined();
-      expect(result.data?.reportId).toBeDefined();
+      expect(result.data).toEqual(mockResponse.data);
     });
   });
 });
@@ -316,9 +315,14 @@ describe('API Client - Messages', () => {
         { id: '2', content: 'Hi there', senderType: 'external_admin', createdAt: new Date() },
       ];
 
+      const mockResponse = {
+        success: true,
+        data: mockMessages,
+      };
+
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ success: true, data: mockMessages }),
+        json: async () => mockResponse,
       });
 
       const result = await getMessages('room_1', 50);
@@ -332,8 +336,7 @@ describe('API Client - Messages', () => {
         })
       );
 
-      expect(result.data).toBeDefined();
-      expect(Array.isArray(result.data)).toBe(true);
+      expect(result.data).toEqual(mockResponse.data);
     });
   });
 
@@ -346,9 +349,14 @@ describe('API Client - Messages', () => {
         createdAt: new Date(),
       };
 
+      const mockResponse = {
+        success: true,
+        data: mockMessage,
+      };
+
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ success: true, data: mockMessage }),
+        json: async () => mockResponse,
       });
 
       const result = await sendMessage('room_1', 'report_1', 'Test message', false);
@@ -367,8 +375,7 @@ describe('API Client - Messages', () => {
         }),
       });
 
-      expect(result.data).toBeDefined();
-      expect(result.data?.id).toBe('1');
+      expect(result.data).toEqual(mockResponse.data);
     });
   });
 });
